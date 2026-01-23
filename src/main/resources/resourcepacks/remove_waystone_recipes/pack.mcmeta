@@ -1,0 +1,14 @@
+{
+  "pack": {
+    "pack_format": 94.1,
+    "description": "Remove all Server-Side Waystones recipes"
+  },
+  "filter": {
+    "block": [
+      {
+        "namespace": "sswaystones",
+        "path": "recipe/.*"
+      }
+    ]
+  }
+}
