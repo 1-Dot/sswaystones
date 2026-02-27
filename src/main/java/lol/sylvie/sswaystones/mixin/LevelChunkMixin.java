@@ -5,10 +5,10 @@
 package lol.sylvie.sswaystones.mixin;
 
 import com.llamalad7.mixinextras.sugar.Local;
-import lol.sylvie.sswaystones.block.WaystoneBlockEntity;
+import lol.sylvie.sswaystones.block.WaystoneBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -24,7 +24,7 @@ public class LevelChunkMixin {
 
     @ModifyVariable(method = "setBlockState", at = @At("STORE"), ordinal = 4)
     private boolean sswaystones$fixSetblockUpdating(boolean value, @Local(argsOnly = true) BlockPos pos) {
-        BlockEntity blockEntity = level.getBlockEntity(pos);
-        return value || (blockEntity instanceof WaystoneBlockEntity);
+        Block block = level.getBlockState(pos).getBlock();
+        return value || (block instanceof WaystoneBlock);
     }
 }

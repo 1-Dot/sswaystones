@@ -7,11 +7,15 @@ package lol.sylvie.sswaystones.gui;
 import eu.pb4.sgui.api.ClickType;
 import eu.pb4.sgui.api.elements.GuiElementBuilder;
 import eu.pb4.sgui.api.gui.*;
+import java.util.ArrayList;
 import java.util.List;
+import lol.sylvie.sswaystones.integration.SquaremapIntegration;
+import lol.sylvie.sswaystones.storage.PlayerData;
 import lol.sylvie.sswaystones.storage.WaystoneRecord;
 import lol.sylvie.sswaystones.storage.WaystoneStorage;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.MenuType;
@@ -25,54 +29,86 @@ public class JavaViewerGui extends SimpleGui {
     private final WaystoneRecord waystone;
     private int pageIndex = 0;
 
-    private final List<WaystoneRecord> accessible;
+    private final WaystoneStorage storage;
+    private final PlayerData playerData;
+    private final List<WaystoneRecord> favorites;
+    private final List<WaystoneRecord> nonFavorites;
+    private final boolean hasFavorites;
     private final int maxPages;
 
     public JavaViewerGui(ServerPlayer player, @Nullable WaystoneRecord waystone) {
         super(MenuType.GENERIC_9x6, player, false);
         this.waystone = waystone;
 
-        WaystoneStorage storage = WaystoneStorage.getServerState(player.level().getServer());
-        this.accessible = storage.getAccessibleWaystones(player, waystone);
-        this.maxPages = Math.max(Math.ceilDiv(this.accessible.size(), ITEMS_PER_PAGE), 1);
+        this.storage = WaystoneStorage.getServerState(player.level().getServer());
+        this.playerData = WaystoneStorage.getPlayerState(player);
+
+        // Get accessible waystones (includes current waystone in normal sort order)
+        List<WaystoneRecord> accessible = storage.getAccessibleWaystones(player, null);
+
+        // Separate favorites and non-favorites
+        this.favorites = new ArrayList<>();
+        this.nonFavorites = new ArrayList<>();
+
+        for (WaystoneRecord record : accessible) {
+            if (playerData.isFavorite(record.getHash())) {
+                this.favorites.add(record);
+            } else {
+                this.nonFavorites.add(record);
+            }
+        }
+
+        this.hasFavorites = !favorites.isEmpty();
+
+        // Calculate max pages: if has favorites, page 0 is favorites, then regular
+        // pages
+        int totalItems = hasFavorites ? nonFavorites.size() : getAllAccessible().size();
+        int regularPages = Math.max(Math.ceilDiv(totalItems, ITEMS_PER_PAGE), 1);
+        this.maxPages = hasFavorites ? regularPages + 1 : regularPages;
 
         this.updateMenu();
     }
 
     public void updateMenu() {
-        // If there are no other waystones this will display as 0
-        if (waystone != null) {
-            this.setTitle(Component.literal(String.format("%s [%s] (%s/%s)", waystone.getWaystoneName(),
-                    waystone.getOwnerName(), pageIndex + 1, maxPages)));
-        } else {
-            this.setTitle(Component.literal(String.format("Waystones (%s/%s)", pageIndex + 1, maxPages)));
-        }
+        // Determine if this is the favorites page
+        boolean isFavoritesPage = hasFavorites && pageIndex == 0;
 
-        int offset = ITEMS_PER_PAGE * pageIndex;
+        // Update title
+        if (waystone != null) {
+            String pageSuffix = isFavoritesPage ? "★" : String.valueOf(pageIndex + 1);
+            this.setTitle(Component.literal(String.format("%s [%s] (%s/%s)", waystone.getWaystoneName(),
+                    waystone.getOwnerName(), pageSuffix, maxPages)));
+        } else {
+            String pageSuffix = isFavoritesPage ? "★" : String.valueOf(pageIndex + 1);
+            this.setTitle(Component.literal(String.format("Waystones (%s/%s)", pageSuffix, maxPages)));
+        }
 
         for (int i = 0; i < ITEMS_PER_PAGE; i++) {
             this.clearSlot(i);
         }
 
-        for (int i = offset; i < this.accessible.size(); i++) {
-            WaystoneRecord record = this.accessible.get(i);
+        // Determine which list to display and calculate offset
+        List<WaystoneRecord> displayList;
+        int offset;
+
+        if (isFavoritesPage) {
+            displayList = this.favorites;
+            offset = 0;
+        } else {
+            displayList = hasFavorites ? this.nonFavorites : getAllAccessible();
+            // If has favorites, page 1 is the first regular page (index 0 in nonFavorites)
+            int regularPageIndex = hasFavorites ? pageIndex - 1 : pageIndex;
+            offset = ITEMS_PER_PAGE * regularPageIndex;
+        }
+
+        for (int i = offset; i < displayList.size(); i++) {
+            WaystoneRecord record = displayList.get(i);
             int slot = i - offset;
             if (slot >= 45)
                 break;
 
-            GuiElementBuilder element = new GuiElementBuilder(record.getIconOrHead(player.level().getServer()))
-                    .setName(record.getWaystoneText().copy().withStyle(ChatFormatting.YELLOW));
-
-            if (!record.getAccessSettings().isServerOwned())
-                element.setLore(List.of(Component.nullToEmpty(record.getOwnerName())));
-            else
-                element.glow(true);
-
-            element.setCallback((index, type, action, gui) -> {
-                record.handleTeleport(player);
-                gui.close();
-            });
-
+            boolean isFavorite = playerData.isFavorite(record.getHash());
+            GuiElementBuilder element = createWaystoneElement(record, isFavorite);
             this.setSlot(slot, element);
         }
 
@@ -139,6 +175,126 @@ public class JavaViewerGui extends SimpleGui {
         }
 
         this.updateMenu();
+    }
+
+    private List<WaystoneRecord> getAllAccessible() {
+        List<WaystoneRecord> all = new ArrayList<>();
+        all.addAll(favorites);
+        all.addAll(nonFavorites);
+        return all;
+    }
+
+    private GuiElementBuilder createWaystoneElement(WaystoneRecord record, boolean isFavorite) {
+        boolean isCurrentWaystone = waystone != null && record.getHash().equals(waystone.getHash());
+
+        GuiElementBuilder element = new GuiElementBuilder(record.getIconOrHead(player.level().getServer()))
+                .setName(record.getWaystoneText().copy().withStyle(ChatFormatting.YELLOW));
+
+        // Dimension display logic
+        int dimensionCount = 1;
+        ChatFormatting dimensionColor = ChatFormatting.AQUA; // Default for overworld
+        String dimensionId = record.getWorldKey().identifier().toString();
+
+        if ("minecraft:the_nether".equals(dimensionId)) {
+            dimensionCount = 2;
+            dimensionColor = ChatFormatting.RED; // Nether
+        } else if ("minecraft:the_end".equals(dimensionId)) {
+            dimensionCount = 3;
+            dimensionColor = ChatFormatting.BLUE; // End
+        }
+
+        // Current waystone uses count 64 to distinguish
+        if (isCurrentWaystone) {
+            dimensionCount = 64;
+        }
+
+        element.setCount(dimensionCount);
+        element.setName(record.getWaystoneText().copy().withStyle(dimensionColor));
+
+        if (record.getAccessSettings().isServerOwned()) {
+            element.glow(true);
+        }
+
+        List<Component> loreLines = new ArrayList<>();
+
+        // Show "Current Location" indicator for current waystone
+        if (isCurrentWaystone) {
+            loreLines.add(
+                    Component.translatable("gui.sswaystones.current_location").withStyle(ChatFormatting.LIGHT_PURPLE));
+        }
+
+        BlockPos pos = record.getPos();
+        String coords = String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ());
+        loreLines.add(Component.nullToEmpty(coords));
+
+        if (!record.getAccessSettings().isServerOwned()) {
+            loreLines.add(Component.nullToEmpty(record.getOwnerName()).copy().withStyle(ChatFormatting.GRAY));
+        }
+
+        // Add favorite indicator
+        if (isFavorite) {
+            loreLines.add(Component.literal("★ ").withStyle(ChatFormatting.GOLD)
+                    .append(Component.translatable("gui.sswaystones.favorite").withStyle(ChatFormatting.GOLD)));
+        }
+
+        // Add XP cost display (not for current waystone since you can't teleport to
+        // yourself)
+        if (!isCurrentWaystone) {
+            int xpCost = record.getXpCost(player);
+            if (xpCost > 0) {
+                loreLines
+                        .add(Component.translatable("gui.sswaystones.xp_cost", xpCost).withStyle(ChatFormatting.GREEN));
+            }
+        }
+
+        loreLines.add(Component.empty());
+        if (isCurrentWaystone) {
+            loreLines.add(Component.translatable("gui.sswaystones.shift_click_to_toggle_favorite")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+        } else {
+            loreLines.add(
+                    Component.translatable("gui.sswaystones.click_to_teleport").withStyle(ChatFormatting.DARK_GRAY));
+            loreLines.add(Component.translatable("gui.sswaystones.shift_click_to_toggle_favorite")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+        }
+
+        element.setLore(loreLines);
+
+        element.setCallback((index, type, action, gui) -> {
+            if (type == ClickType.MOUSE_LEFT_SHIFT || type == ClickType.MOUSE_RIGHT_SHIFT) {
+                // Toggle favorite
+                String hash = record.getHash();
+                boolean wasFavorite = playerData.isFavorite(hash);
+
+                if (wasFavorite) {
+                    // Remove from favorites
+                    playerData.toggleFavorite(hash);
+                    favorites.remove(record);
+                    nonFavorites.addFirst(record);
+                } else if (playerData.canAddFavorite()) {
+                    // Add to favorites
+                    playerData.toggleFavorite(hash);
+                    nonFavorites.remove(record);
+                    favorites.add(record);
+                } else {
+                    // Can't add, favorites full
+                    player.sendSystemMessage(
+                            Component.translatable("error.sswaystones.favorites_full").withStyle(ChatFormatting.RED));
+                }
+
+                // Rebuild GUI to update favorites page visibility
+                ViewerUtil.openJavaGui(player, waystone);
+            } else {
+                // Don't teleport if clicking on current waystone
+                boolean clickedCurrentWaystone = waystone != null && record.getHash().equals(waystone.getHash());
+                if (!clickedCurrentWaystone) {
+                    record.handleTeleport(player);
+                    gui.close();
+                }
+            }
+        });
+
+        return element;
     }
 
     protected static class NameGui extends AnvilInputGui {
@@ -278,6 +434,7 @@ public class JavaViewerGui extends SimpleGui {
 
                 serverToggle.setCallback((index, type, action, gui) -> {
                     accessSettings.setServerOwned(!accessSettings.isServerOwned());
+                    SquaremapIntegration.onWaystoneChanged(waystone);
                     this.updateMenu();
                 });
                 this.setSlot(slot, serverToggle);

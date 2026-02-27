@@ -9,6 +9,7 @@ import java.util.UUID;
 import lol.sylvie.sswaystones.block.ModBlocks;
 import lol.sylvie.sswaystones.command.WaystonesCommand;
 import lol.sylvie.sswaystones.config.Configuration;
+import lol.sylvie.sswaystones.integration.SquaremapIntegration;
 import lol.sylvie.sswaystones.item.ModItems;
 import lol.sylvie.sswaystones.worldgen.VillageInjector;
 import net.fabricmc.api.ModInitializer;
@@ -46,6 +47,18 @@ public class Waystones implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTING.register(VillageInjector::inject);
         ResourceLoader.registerBuiltinPack(Waystones.id("remove_waystone_recipes"),
                 FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow(), PackActivationType.NORMAL);
+
+        // Squaremap integration (optional)
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            if (SquaremapIntegration.isSquaremapAvailable()) {
+                SquaremapIntegration.initialize(server);
+            }
+        });
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            if (SquaremapIntegration.isSquaremapAvailable()) {
+                SquaremapIntegration.shutdown();
+            }
+        });
     }
 
     public static Identifier id(String name) {

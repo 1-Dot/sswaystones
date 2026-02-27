@@ -10,6 +10,7 @@ import com.mojang.authlib.minecraft.MinecraftSessionService;
 import com.mojang.authlib.yggdrasil.ProfileResult;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -36,6 +37,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -44,6 +47,7 @@ import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.PlayerTeam;
 import org.jetbrains.annotations.Nullable;
@@ -175,11 +179,86 @@ public final class WaystoneRecord {
 
         // Teleport!
         Vec3 center = target.getBottomCenter();
+
+        // Collect all associated entities (passengers, vehicles, leashed mobs)
+        Set<Entity> entitiesToTeleport = collectAssociatedEntities(player);
+
+        // Teleport the player first
         player.teleportTo(targetWorld, center.x(), center.y(), center.z(), Set.of(), player.getYRot(), player.getXRot(),
                 false);
+
+        // Teleport all associated entities
+        for (Entity entity : entitiesToTeleport) {
+            if (entity != player) {
+                entity.teleportTo(targetWorld, center.x(), center.y(), center.z(), Set.of(), entity.getYRot(),
+                        entity.getXRot(), false);
+            }
+        }
+
         targetWorld.playSound(null, target, SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1f, 1f);
         targetWorld.sendParticles(PowerParticleOption.create(ParticleTypes.DRAGON_BREATH, 1f), center.x(),
                 center.y() + 1f, center.z(), 16, 0.5d, 0.5d, 0.5d, 0.1d);
+    }
+
+    /**
+     * Recursively collects all entities associated with the player: - Vehicles
+     * (entities the player is riding) - Passengers (entities riding the player or
+     * player's vehicle) - Leashed mobs (entities on a leash held by the player)
+     */
+    private Set<Entity> collectAssociatedEntities(ServerPlayer player) {
+        Set<Entity> entities = new HashSet<>();
+        collectEntitiesRecursively(player, entities);
+
+        // Collect leashed entities
+        collectLeashedEntities(player, entities);
+
+        return entities;
+    }
+
+    private void collectEntitiesRecursively(Entity entity, Set<Entity> collected) {
+        if (entity == null || collected.contains(entity)) {
+            return;
+        }
+        collected.add(entity);
+
+        // Collect vehicle (what this entity is riding)
+        Entity vehicle = entity.getVehicle();
+        if (vehicle != null) {
+            collectEntitiesRecursively(vehicle, collected);
+        }
+
+        // Collect all passengers (entities riding this entity)
+        for (Entity passenger : entity.getPassengers()) {
+            collectEntitiesRecursively(passenger, collected);
+        }
+
+        // Get the root vehicle and collect all its passengers
+        Entity rootVehicle = entity.getRootVehicle();
+        if (rootVehicle != null && rootVehicle != entity) {
+            collectEntitiesRecursively(rootVehicle, collected);
+        }
+    }
+
+    private void collectLeashedEntities(ServerPlayer player, Set<Entity> collected) {
+        // Search for entities leashed to the player within a reasonable radius
+        Level level = player.level();
+        AABB searchBox = player.getBoundingBox().inflate(10.0); // Leash max length is about 10 blocks
+
+        List<Entity> nearbyEntities = level.getEntities(player, searchBox);
+        for (Entity entity : nearbyEntities) {
+            if (entity instanceof Leashable leashable) {
+                Entity leashHolder = leashable.getLeashHolder();
+                if (leashHolder == player) {
+                    if (!collected.contains(entity)) {
+                        collected.add(entity);
+                        // Also collect passengers of leashed entities
+                        for (Entity passenger : entity.getPassengers()) {
+                            collectEntitiesRecursively(passenger, collected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     public boolean canPlayerEdit(ServerPlayer player) {

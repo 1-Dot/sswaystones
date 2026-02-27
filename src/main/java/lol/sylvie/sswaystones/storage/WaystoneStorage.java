@@ -8,6 +8,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.*;
 import lol.sylvie.sswaystones.Waystones;
+import lol.sylvie.sswaystones.integration.SquaremapIntegration;
 import lol.sylvie.sswaystones.util.NameGenerator;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.ChatFormatting;
@@ -76,12 +77,13 @@ public class WaystoneStorage extends SavedData {
 
     public List<WaystoneRecord> getAccessibleWaystones(ServerPlayer player, WaystoneRecord record) {
         // Get all waystones that the player can access
-        // Sorted by name, though prioritize server owned waystones
-        return this.waystones.values().stream()
-                .filter(waystone -> waystone.getAccessSettings().canPlayerAccess(waystone, player)
-                        && waystone != record)
-                .sorted(Comparator.comparing(WaystoneRecord::getWaystoneName))
-                .sorted(Comparator.comparing((waystone) -> !waystone.getAccessSettings().isServerOwned())).toList();
+        // Sorted by dimension, then by name, prioritizing server owned waystones
+        return this.waystones.values().stream().filter(
+                waystone -> waystone.getAccessSettings().canPlayerAccess(waystone, player) && waystone != record)
+                .sorted(java.util.Comparator.comparingInt(WaystoneStorage::getDimensionWeight)
+                        .thenComparing(waystone -> !waystone.getAccessSettings().isServerOwned())
+                        .thenComparing(WaystoneRecord::getWaystoneName))
+                .toList();
     }
 
     // Create a waystone
@@ -105,7 +107,7 @@ public class WaystoneStorage extends SavedData {
 
         WaystoneRecord record = new WaystoneRecord(player.getUUID(), player.getName().getString(),
                 NameGenerator.generateName(), pos, world.dimension(),
-                new WaystoneRecord.AccessSettings(false, false, ""), Items.PLAYER_HEAD);
+                new WaystoneRecord.AccessSettings(true, false, ""), Items.PLAYER_HEAD);
         String hash = record.getHash();
         this.waystones.put(hash, record);
 
@@ -128,5 +130,20 @@ public class WaystoneStorage extends SavedData {
         amnesiaWaystone(record);
 
         this.waystones.remove(record.getHash());
+
+        // Update Squaremap markers
+        SquaremapIntegration.onWaystoneRemoved(record);
+    }
+
+    private static int getDimensionWeight(WaystoneRecord record) {
+        String dimensionId = record.getWorldKey().identifier().toString();
+        switch (dimensionId) {
+            case "minecraft:the_nether" :
+                return 2;
+            case "minecraft:the_end" :
+                return 3;
+            default : // 主世界以及其他模组的维度
+                return 1;
+        }
     }
 }
