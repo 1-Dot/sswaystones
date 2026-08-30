@@ -22,6 +22,7 @@ import lol.sylvie.sswaystones.gui.ViewerUtil;
 import lol.sylvie.sswaystones.util.HashUtil;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.ChatFormatting;
+import net.minecraft.IdentifierException;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
@@ -30,6 +31,7 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.particles.PowerParticleOption;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -45,6 +47,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -110,10 +113,9 @@ public final class WaystoneRecord {
         int requiredXp = getXpCost(player);
         if (requiredXp > 0) {
             if (player.experienceLevel < requiredXp) {
-                player.displayClientMessage(
+                player.sendOverlayMessage(
                         Component.translatable("error.sswaystones.not_enough_xp", requiredXp - player.experienceLevel)
-                                .withStyle(ChatFormatting.RED),
-                        true);
+                                .withStyle(ChatFormatting.RED));
                 return;
             } else {
                 player.giveExperienceLevels(Math.min(-requiredXp, 0)); // Stop negative values from adding xp
@@ -139,11 +141,21 @@ public final class WaystoneRecord {
         }
 
         if (config.safeTeleport) {
-            // Remove any blocks trying to suffocate the player
+            // Remove any blocks trying to suffocate the player except those marked as
+            // unremoveable
+            List<Block> unremoveableBlocks = config.safeTeleportUnremovableBlocks.stream().map(x -> {
+                try {
+                    Identifier id = Identifier.parse(x);
+                    return BuiltInRegistries.BLOCK.getValue(id);
+                } catch (IdentifierException ignored) {
+                }
+                return null;
+            }).toList();
             BlockPos head = target.offset(0, 1, 0);
             BlockState headState = targetWorld.getBlockState(head);
             if (!headState.getCollisionShape(targetWorld, head).isEmpty()) {
-                if (headState.getDestroySpeed(targetWorld, head) != -1) {
+                if (headState.getDestroySpeed(targetWorld, head) != -1
+                        && !unremoveableBlocks.contains(headState.getBlock())) {
                     server.executeIfPossible(() -> targetWorld.destroyBlock(head, true));
                 }
             }
@@ -178,7 +190,7 @@ public final class WaystoneRecord {
         }
 
         // Teleport!
-        Vec3 center = target.getBottomCenter();
+        Vec3 center = Vec3.atBottomCenterOf(target);
 
         // Collect all associated entities (passengers, vehicles, leashed mobs)
         Set<Entity> entitiesToTeleport = collectAssociatedEntities(player);
@@ -262,7 +274,8 @@ public final class WaystoneRecord {
     }
 
     public boolean canPlayerEdit(ServerPlayer player) {
-        return this.getOwnerUUID().equals(player.getUUID()) || Permissions.check(player, "sswaystones.manager", 4);
+        return this.getOwnerUUID().equals(player.getUUID())
+                || Permissions.check(player, "sswaystones.manager", PermissionLevel.ADMINS);
     }
 
     public int getXpCost(ServerPlayer player) {
@@ -352,6 +365,10 @@ public final class WaystoneRecord {
             this.team = team;
         }
 
+        public boolean isEffectivelyGlobal() {
+            return this.isGlobal() || this.isServerOwned();
+        }
+
         public boolean canPlayerAccess(WaystoneRecord parent, ServerPlayer player) {
             if (ViewerUtil.mayAccessAll.contains(player.getUUID())
                     && Permissions.check(player, "sswaystones.showall", PermissionLevel.ADMINS))
@@ -361,7 +378,7 @@ public final class WaystoneRecord {
             if (data.discoveredWaystones.contains(parent.getHash()))
                 return true;
 
-            if (this.isGlobal() || this.isServerOwned())
+            if (this.isEffectivelyGlobal())
                 return true;
 
             PlayerTeam team = player.getTeam();

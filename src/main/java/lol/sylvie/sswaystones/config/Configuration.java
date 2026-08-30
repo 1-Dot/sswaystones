@@ -10,6 +10,7 @@ import com.google.gson.JsonSyntaxException;
 import com.google.gson.annotations.SerializedName;
 import java.io.*;
 import java.nio.file.Path;
+import java.util.List;
 import lol.sylvie.sswaystones.Waystones;
 import lol.sylvie.sswaystones.util.NameGenerator;
 import net.fabricmc.loader.api.FabricLoader;
@@ -45,6 +46,7 @@ public class Configuration {
                 instance = loaded;
 
             NameGenerator.reloadFiles();
+        } catch (FileNotFoundException ignored) {
         } catch (IOException exception) {
             Waystones.LOGGER.warn("Could not load configuration from disk!", exception);
         } catch (JsonSyntaxException exception) {
@@ -77,6 +79,10 @@ public class Configuration {
         @SerializedName("paranoid_teleport")
         @Description(translation = "config.sswaystones.paranoid_teleport")
         public boolean safeTeleport = true;
+
+        @SerializedName("paranoid_teleport_unremovable_blocks")
+        @Description(translation = "config.sswaystones.paranoid_teleport_unremovable_blocks")
+        public List<String> safeTeleportUnremovableBlocks = List.of();
 
         @SerializedName("remove_invalid_waystones")
         @Description(translation = "config.sswaystones.remove_invalid_waystones")
