@@ -4,11 +4,11 @@
 */
 package lol.sylvie.sswaystones.integration;
 
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
+import javax.imageio.ImageIO;
 import lol.sylvie.sswaystones.Waystones;
 import lol.sylvie.sswaystones.storage.WaystoneRecord;
 import lol.sylvie.sswaystones.storage.WaystoneStorage;
@@ -27,7 +27,9 @@ public class SquaremapIntegration {
     private static final String LAYER_KEY = "sswaystones";
     private static final String ICON_SERVER = "sswaystones_server";
     private static final String ICON_PLAYER = "sswaystones_player";
-    private static final int ICON_SIZE = 24;
+    private static final String ICON_SERVER_RESOURCE = "/assets/sswaystones/squaremap/server_waystone.png";
+    private static final String ICON_PLAYER_RESOURCE = "/assets/sswaystones/squaremap/player_waystone.png";
+    private static final int ICON_SIZE = 32;
 
     private static boolean initialized = false;
     private static MinecraftServer currentServer = null;
@@ -81,53 +83,30 @@ public class SquaremapIntegration {
     }
 
     /**
-     * Create and register waystone icons programmatically
+     * Load and register the bundled waystone icons.
      */
     private static void registerIcons(Squaremap api) {
-        // Create server waystone icon (purple square diamond)
-        BufferedImage serverIcon = createWaystoneIcon(new Color(164, 139, 252), new Color(0, 0, 0));
-        api.iconRegistry().register(Key.of(ICON_SERVER), serverIcon);
-
-        // Create player waystone icon (blue square diamond)
-        BufferedImage playerIcon = createWaystoneIcon(new Color(134, 196, 249), new Color(0, 0, 0));
-        api.iconRegistry().register(Key.of(ICON_PLAYER), playerIcon);
+        api.iconRegistry().register(Key.of(ICON_SERVER), loadIcon(ICON_SERVER_RESOURCE));
+        api.iconRegistry().register(Key.of(ICON_PLAYER), loadIcon(ICON_PLAYER_RESOURCE));
     }
 
     /**
-     * Create a waystone marker icon - a square diamond (45° rotated square)
+     * Load a Squaremap icon bundled with the mod.
      */
-    private static BufferedImage createWaystoneIcon(Color fillColor, Color borderColor) {
-        BufferedImage image = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2d = image.createGraphics();
+    private static BufferedImage loadIcon(String resourcePath) {
+        try (InputStream stream = SquaremapIntegration.class.getResourceAsStream(resourcePath)) {
+            if (stream == null) {
+                throw new IllegalStateException("Missing Squaremap icon resource: " + resourcePath);
+            }
 
-        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        int centerX = ICON_SIZE / 2;
-        int centerY = ICON_SIZE / 2;
-        int halfSize = ICON_SIZE / 2 - 3; // Square diamond: equal width and height
-
-        // Square diamond shape points (45° rotated square)
-        int[] xPoints = {centerX, centerX + halfSize, centerX, centerX - halfSize};
-        int[] yPoints = {centerY - halfSize, centerY, centerY + halfSize, centerY};
-
-        // Draw filled diamond
-        g2d.setColor(fillColor);
-        g2d.fillPolygon(xPoints, yPoints, 4);
-
-        // Draw border
-        g2d.setColor(borderColor);
-        g2d.setStroke(new java.awt.BasicStroke(2));
-        g2d.drawPolygon(xPoints, yPoints, 4);
-
-        // Add inner highlight
-        g2d.setColor(new Color(255, 255, 255, 80));
-        int innerSize = halfSize / 2;
-        int[] innerX = {centerX, centerX + innerSize, centerX, centerX - innerSize};
-        int[] innerY = {centerY - innerSize, centerY, centerY + innerSize, centerY};
-        g2d.fillPolygon(innerX, innerY, 4);
-
-        g2d.dispose();
-        return image;
+            BufferedImage image = ImageIO.read(stream);
+            if (image == null) {
+                throw new IllegalStateException("Unsupported Squaremap icon resource: " + resourcePath);
+            }
+            return image;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load Squaremap icon resource: " + resourcePath, e);
+        }
     }
 
     /**
